@@ -63,7 +63,7 @@ local function add_player(cv, env)
     nb_crow_ext = "_1_2"
     
     function player:add_params()
-        params:add_group("nb_crow_"..self.ext, "crow "..cv.."/"..env, 11+9)
+        params:add_group("nb_crow_"..self.ext, "crow "..cv.."/"..env, 11+10)
         params:add_control("nb_crow_attack_time"..self.ext, "attack", controlspec.new(0.0001, 3, 'exp', 0, 0.1, "s"))
         params:add_option("nb_crow_attack_shape"..self.ext, "attack shape", ASL_SHAPES, 3)
         params:add_control("nb_crow_decay_time"..self.ext, "decay", controlspec.new(0.0001, 10, 'exp', 0, 1.0, "s"))
@@ -93,9 +93,15 @@ local function add_player(cv, env)
         params:add_control("starting_voltage"..self.ext, "starting voltage", controlspec.new(-5.0, 10.0, 'lin', 0.01, -5, "",0.001))
         params:set_action("starting_voltage"..self.ext, function(volts)
           crow.output[params:get("crow_eval_output"..self.ext)].volts = volts
+          starting_freq = params:get("current_freq"..self.ext)
+          print('starting_freq',starting_freq)
+        end)
+        params:add_control("ending_voltage"..self.ext, "ending voltage", controlspec.new(-5.0, 10.0, 'lin', 0.01, 5.0, "",0.001))
+        params:set_action("ending_voltage"..self.ext, function(volts)
+          crow.output[params:get("crow_eval_output"..self.ext)].volts = volts
         end)
 
-        voltage_increments={0.001,0.0005}
+        voltage_increments={0.001,0.0005,0.0001}
         params:add{type = "option", id = "voltage_increment"..self.ext, name = "voltage increment", options = voltage_increments, default = 1, action = function(value)
         end}
       
@@ -103,14 +109,15 @@ local function add_player(cv, env)
         params:set_action("load_last_eval"..self.ext, function() load_freqs_volts(params:get("crow_eval_output"..self.ext)) end)
         params:add{type = "trigger", id = "start_evaluation"..self.ext, name = "start eval"}
         params:set_action("start_evaluation"..self.ext, function()
-          first_pitch = -1
-          last_pitch = -1
-          first_voltage = nil
-          last_voltage = nil
-          local msg={
+        
+         local msg={
             params:get("crow_eval_output"..self.ext),
             voltage_increments[params:get("voltage_increment"..self.ext)],
-            params:get("target_conf"..self.ext)*0.01
+            params:get("target_conf"..self.ext)*0.01,
+            starting_freq,
+            params:get("starting_voltage"..self.ext),
+            params:get("ending_voltage"..self.ext)
+
           }
           tuning = true
           for i=1,3 do
@@ -136,31 +143,35 @@ local function add_player(cv, env)
         local freq_ix, nearest_voltage = find_nearest_value(frequencies[1],music.note_num_to_freq(note))
         v8 = tonumber(voltages[1][freq_ix])
         
-        local v_vel = vel * 10
-        local attack = params:get("nb_crow_attack_time"..self.ext)
-        local attack_shape = ASL_SHAPES[params:get("nb_crow_attack_shape"..self.ext)]
-        local decay = params:get("nb_crow_decay_time"..self.ext)
-        local decay_shape = ASL_SHAPES[params:get("nb_crow_decay_shape"..self.ext)]
-        local sustain = params:get("nb_crow_sustain"..self.ext)
-        local portomento = params:get("nb_crow_portomento"..self.ext)
-        local legato = params:get("nb_crow_legato"..self.ext)
-        if self.count > 0 then
-            crow.output[cv].action = string.format("{ to(%f,%f,sine) }", v8, portomento)
-            crow.output[cv]()
-            -- print("v8 execute",v8,note,self.count,cv)
+        if music.note_num_to_freq(note)<=tonumber(last_pitch) and music.note_num_to_freq(note)>=tonumber(first_pitch) then
+          local v_vel = vel * 10
+          local attack = params:get("nb_crow_attack_time"..self.ext)
+          local attack_shape = ASL_SHAPES[params:get("nb_crow_attack_shape"..self.ext)]
+          local decay = params:get("nb_crow_decay_time"..self.ext)
+          local decay_shape = ASL_SHAPES[params:get("nb_crow_decay_shape"..self.ext)]
+          local sustain = params:get("nb_crow_sustain"..self.ext)
+          local portomento = params:get("nb_crow_portomento"..self.ext)
+          local legato = params:get("nb_crow_legato"..self.ext)
+          if self.count > 0 then
+              crow.output[cv].action = string.format("{ to(%f,%f,sine) }", v8, portomento)
+              crow.output[cv]()
+              -- print("v8 execute",v8,note,self.count,cv)
+          else
+              crow.output[cv].volts = v8
+          end
+          local action
+          if self.count > 0 and legato > 0 then
+              action = string.format("{ to(%f,%f,'%s') }", v_vel*sustain, decay, decay_shape)
+          else
+              action = string.format("{ to(%f,%f,'%s'), to(%f,%f,'%s') }", v_vel, attack, attack_shape, v_vel*sustain, decay, decay_shape)
+          end
+          -- print(action)
+          crow.output[env].action = action
+          crow.output[env]()
+          self.count = self.count + 1
         else
-            crow.output[cv].volts = v8
+          -- print("too high or low",note,music.note_num_to_freq(note),last_pitch,freq_ix,v8,first_pitch,last_pitch)
         end
-        local action
-        if self.count > 0 and legato > 0 then
-            action = string.format("{ to(%f,%f,'%s') }", v_vel*sustain, decay, decay_shape)
-        else
-            action = string.format("{ to(%f,%f,'%s'), to(%f,%f,'%s') }", v_vel, attack, attack_shape, v_vel*sustain, decay, decay_shape)
-        end
-        -- print(action)
-        crow.output[env].action = action
-        crow.output[env]()
-        self.count = self.count + 1
     end
 
     function player:note_off(note)
@@ -424,8 +435,8 @@ mod.hook.register("script_post_init", "nb crow post init", function()
     elseif path == "/lua_crooner/pitch_evaluation_completed" then
       local crow_output=tonumber(args[1])
       local success=tonumber(args[2])
-      local first_pitch=tonumber(args[3])
-      local last_pitch=tonumber(args[4])
+      first_pitch=tonumber(args[3])
+      last_pitch=tonumber(args[4])
       local first_voltage=tonumber(args[5])
       local last_voltage=tonumber(args[6])
 
@@ -454,7 +465,6 @@ mod.hook.register("script_post_init", "nb crow post init", function()
       params:set("current_conf"..nb_crow_ext,current_conf and math.floor(current_conf*100))          
       -- print("pitch/confidence: ", args[1],args[2])
     elseif path == "/lua_crooner/set_crow_voltage" then
-      -- print("cout",args)
       local output = tonumber(args[1])
       local volts = args[2]
       test_voltage = volts

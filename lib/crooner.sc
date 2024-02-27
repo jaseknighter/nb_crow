@@ -1,9 +1,9 @@
 
 Crooner {
   classvar sender, freq, conf, fluidPitch, s;
-  classvar <starting_voltage= -5, <ending_voltage=5,<sample_rate=100;
+  classvar <starting_freq= 120,<starting_voltage= -5, <ending_voltage=5,<sample_rate=100;
   classvar first_detected_pitch_voltage,last_detected_pitch_voltage,first_detected_pitch, last_detected_pitch;
-  classvar prior_freq=0, dup_freqs=0;
+  classvar prior_freq=0;
   classvar current_voltage, voltage_incr=0.001, voltage_confidence_level = 0.20, voltage_confidence_hits=0, evaluating=false, 
   <frequencies, <rounded_frequencies, <freq_distances,<voltages,
   found_first_frequency=false;
@@ -108,8 +108,9 @@ Crooner {
           //start_evaluation
           OSCFunc.new({ |msg, time, addr, recvPort|
             var crow_output_ix;
-            starting_voltage= -5;
-            ending_voltage=5;
+            starting_freq = msg[4];
+            starting_voltage = msg[5]-0.5;
+            ending_voltage = msg[6];
             current_voltage = starting_voltage;
             first_detected_pitch_voltage = nil;
             last_detected_pitch_voltage = nil;
@@ -117,7 +118,6 @@ Crooner {
             last_detected_pitch = nil;
             found_first_frequency = false;
             voltage_confidence_hits=0;
-            dup_freqs=0;
             prior_freq=0; 
             switch(msg[1].asInteger,
               1,{crow_output_ix=0},
@@ -127,6 +127,7 @@ Crooner {
             );            
             if (msg[2]>0,{voltage_incr=msg[2]});
             if (msg[3]>0,{voltage_confidence_level=msg[3]});
+            (["starting freq",starting_freq]).postln;
             (["crow output set to",crow_output_ix]).postln;
             (["voltage_incr: ",voltage_incr,msg[2]]).postln;
             (["confidence level: ",voltage_confidence_level]).postln;
@@ -159,7 +160,7 @@ Crooner {
               );
               lua_sender.sendMsg("/lua_crooner/set_crow_voltage", crow_output, voltage);
               // if ((confidence > voltage_confidence_level).and(frequency.round(0.01) >= prior_freq.round(0.01)).and(found_first_frequency == false), {
-              if ((confidence > voltage_confidence_level).and(found_first_frequency == false), {
+              if ((frequency<=(starting_freq+10)).and(confidence > voltage_confidence_level).and(found_first_frequency == false), {
                 if (voltage_confidence_hits >= 20, {
                   (["found first frequency: ",
                     found_first_frequency,
@@ -183,7 +184,6 @@ Crooner {
                   // haven't yet found the first pitch, reset the frequency and voltage arrays
                   frequencies[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
                   rounded_frequencies[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
-                  // freq_distances[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
                   voltages[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);            
                   voltage_confidence_hits = 0;
                   first_detected_pitch_voltage = nil;
@@ -198,15 +198,14 @@ Crooner {
                 });
               });
 
-              if ((found_first_frequency == true).and(confidence > voltage_confidence_level), {
+              if ((found_first_frequency == true), {
                 var arLen = frequencies[crow_output_ix].size;
 
-                if (frequencies[crow_output_ix].size > 2,{
+                // if (frequencies[crow_output_ix].size > 2,{
                   // freq_distances[crow_output_ix].add(((frequencies[crow_output_ix][arLen-1])-(frequencies[crow_output_ix][arLen-2])));
-                });
+                // });
 
-                // if ((dup_freqs>50).or(current_voltage>4.5), {
-                if (current_voltage>4.5, {
+                if (current_voltage >= ending_voltage, {
                   // [(frequencies[crow_output_ix][arLen-1])-(frequencies[crow_output_ix][arLen-2])].postln;
                   // (freq_distances[crow_output_ix].sum/freq_distances[crow_output_ix].size).postln;
                   "done".postln;
@@ -229,40 +228,13 @@ Crooner {
                   lua_sender.sendMsg("/lua_crooner/set_crow_voltage", crow_output, last_detected_pitch_voltage);
                   lua_sender.sendMsg("/lua_crooner/pitch_evaluation_completed", crow_output, 1, first_detected_pitch, last_detected_pitch, first_detected_pitch_voltage, last_detected_pitch_voltage);
                   (["done evaluating (first/last frequency/voltage)",first_detected_pitch, last_detected_pitch, first_detected_pitch_voltage, last_detected_pitch_voltage,frequencies.size,voltages.size]).postln;
-                },{
-                  
-                  
-                  if(prior_freq.round(0.1) == frequency.round(0.1),{
-                    dup_freqs=dup_freqs+1;
-                    // (["found dup", prior_freq.round(), frequency.round()]).postln;
-                  },{
-                    if((dup_freqs > 1).and(prior_freq.round() != frequency.round()),{
-                      // (["reduce dups", dup_freqs]).postln;
-                      dup_freqs=0;
-                      // dup_freqs=dup_freqs-0.1;
-
-                    });
-                  });
-                  prior_freq = frequency;                  
-                  current_voltage = current_voltage + voltage_incr;
-
-
-
-
                 });
-              });
-
-              if (current_voltage>=5, {
-                evaluating=false;
-                (["eval failed, target dups/num dups: ",20,dup_freqs]).postln;
-                lua_sender.sendMsg("/lua_crooner/pitch_evaluation_completed", crow_output, 0);
-                
-              },{
-                if (prior_freq < frequency, {
-                  prior_freq = frequency;                  
-                });
+                prior_freq = frequency;                  
                 current_voltage = current_voltage + voltage_incr;
+
               });
+
+              current_voltage = current_voltage + voltage_incr;
               
             });
           }, "/sc_crooner/evaluate");
