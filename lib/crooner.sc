@@ -18,7 +18,7 @@ Crooner {
         fluidPitch = Synth('FluidPitchDetector');
         fluidPitch.set(\crow_output,1);
         frequencies = Array.newClear(4);
-        freq_distances = Array.newClear(4);
+        // freq_distances = Array.newClear(4);
         rounded_frequencies = Array.newClear(4);
         voltages = Array.newClear(4);
         lua_sender = NetAddr.new("127.0.0.1",10111);     
@@ -133,7 +133,7 @@ Crooner {
             (["array size ",((ending_voltage - starting_voltage)/voltage_incr).round]).postln;
             frequencies[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
             rounded_frequencies[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
-            freq_distances[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
+            // freq_distances[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
             voltages[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
             Routine.new({
               0.5.wait;
@@ -158,7 +158,8 @@ Crooner {
                 4.0,{crow_output="4";crow_output_ix=3},
               );
               lua_sender.sendMsg("/lua_crooner/set_crow_voltage", crow_output, voltage);
-              if ((confidence > voltage_confidence_level).and(frequency.round(0.01) >= prior_freq.round(0.01)).and(found_first_frequency == false), {
+              // if ((confidence > voltage_confidence_level).and(frequency.round(0.01) >= prior_freq.round(0.01)).and(found_first_frequency == false), {
+              if ((confidence > voltage_confidence_level).and(found_first_frequency == false), {
                 if (voltage_confidence_hits >= 20, {
                   (["found first frequency: ",
                     found_first_frequency,
@@ -182,7 +183,7 @@ Crooner {
                   // haven't yet found the first pitch, reset the frequency and voltage arrays
                   frequencies[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
                   rounded_frequencies[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
-                  freq_distances[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
+                  // freq_distances[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);
                   voltages[crow_output_ix]=Array.new(((ending_voltage - starting_voltage)/voltage_incr).round);            
                   voltage_confidence_hits = 0;
                   first_detected_pitch_voltage = nil;
@@ -192,21 +193,23 @@ Crooner {
               if (confidence > voltage_confidence_level, {
                 if ((found_first_frequency == true).and(frequency.round(0.1) > prior_freq.round(0.1)), {
                   frequencies[crow_output_ix].add(frequency);
-                  rounded_frequencies[crow_output_ix].add(frequency.round());
+                  rounded_frequencies[crow_output_ix].add(frequency.round(0.1));
                   voltages[crow_output_ix].add(voltage);
                 });
               });
 
               if ((found_first_frequency == true).and(confidence > voltage_confidence_level), {
                 var arLen = frequencies[crow_output_ix].size;
+
                 if (frequencies[crow_output_ix].size > 2,{
-                  freq_distances[crow_output_ix].add(((frequencies[crow_output_ix][arLen-1])-(frequencies[crow_output_ix][arLen-2])));
+                  // freq_distances[crow_output_ix].add(((frequencies[crow_output_ix][arLen-1])-(frequencies[crow_output_ix][arLen-2])));
                 });
 
-                if (dup_freqs>50, {
-                  [(frequencies[crow_output_ix][arLen-1])-(frequencies[crow_output_ix][arLen-2])].postln;
-                  (freq_distances[crow_output_ix].sum/freq_distances[crow_output_ix].size).postln;
-                  
+                // if ((dup_freqs>50).or(current_voltage>4.5), {
+                if (current_voltage>4.5, {
+                  // [(frequencies[crow_output_ix][arLen-1])-(frequencies[crow_output_ix][arLen-2])].postln;
+                  // (freq_distances[crow_output_ix].sum/freq_distances[crow_output_ix].size).postln;
+                  "done".postln;
                   freqs_string = frequencies[crow_output_ix].collect{|v| v.asString }.reduce({|l, r| l ++ "," ++ r });
                   freqs_file = File(data_path++"frequencies"++crow_output++".txt".standardizePath,"w");
                   freqs_file.write( freqs_string );
@@ -227,30 +230,37 @@ Crooner {
                   lua_sender.sendMsg("/lua_crooner/pitch_evaluation_completed", crow_output, 1, first_detected_pitch, last_detected_pitch, first_detected_pitch_voltage, last_detected_pitch_voltage);
                   (["done evaluating (first/last frequency/voltage)",first_detected_pitch, last_detected_pitch, first_detected_pitch_voltage, last_detected_pitch_voltage,frequencies.size,voltages.size]).postln;
                 },{
-                  //find the average frequency change to set the target to know when we've reached the last frequency
-                  if (dup_freqs==0, {
-                    
+                  
+                  
+                  if(prior_freq.round(0.1) == frequency.round(0.1),{
+                    dup_freqs=dup_freqs+1;
+                    // (["found dup", prior_freq.round(), frequency.round()]).postln;
+                  },{
+                    if((dup_freqs > 1).and(prior_freq.round() != frequency.round()),{
+                      // (["reduce dups", dup_freqs]).postln;
+                      dup_freqs=0;
+                      // dup_freqs=dup_freqs-0.1;
+
+                    });
                   });
+                  prior_freq = frequency;                  
+                  current_voltage = current_voltage + voltage_incr;
+
+
+
+
                 });
               });
 
               if (current_voltage>=5, {
                 evaluating=false;
-                (["eval failed, target dups/num dups: ",25,dup_freqs]).postln;
+                (["eval failed, target dups/num dups: ",20,dup_freqs]).postln;
                 lua_sender.sendMsg("/lua_crooner/pitch_evaluation_completed", crow_output, 0);
+                
               },{
-
-                if(prior_freq.round() == frequency.round(),{
-                  dup_freqs=dup_freqs+1;
-                  // (["found dup", prior_freq.round(), frequency.round()]).postln;
-                },{
-                  if((dup_freqs > 1).and(prior_freq.round != frequency.round),{
-                    // (["restart dups", dup_freqs]).postln;
-                    dup_freqs=0;
-
-                  });
+                if (prior_freq < frequency, {
+                  prior_freq = frequency;                  
                 });
-                prior_freq = frequency;                  
                 current_voltage = current_voltage + voltage_incr;
               });
               
